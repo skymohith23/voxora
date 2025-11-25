@@ -3,6 +3,9 @@ import React from "react";
 import { BrowserRouter as Router, Routes, Route, Link } from "react-router-dom";
 import Home from "./pages/Home";
 import Learn from "./pages/Learn";
+import SpeechInput from "./components/SpeechInput";
+import SpeechInput from "./components/SpeechInput";
+
 
 function App() {
   return (
@@ -16,6 +19,7 @@ function App() {
       </nav>
 
       <Routes>
+        <Route path="/speech-input" element={<SpeechInput />} />
         <Route path="/" element={<Home />} />
         <Route path="/learn" element={<Learn />} />
         <Route path="/learn" element={<LearnSignLanguage />} />
