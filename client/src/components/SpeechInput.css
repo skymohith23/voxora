@@ -1,0 +1,23 @@
+.speech-input-box {
+  width: 50%;
+  margin: 30px auto;
+  padding: 20px;
+  background: #f4f4f4;
+  border-radius: 12px;
+  text-align: center;
+}
+
+.speech-input-box button {
+  padding: 12px 20px;
+  background: #4b6cb7;
+  color: white;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.result {
+  margin-top: 20px;
+  font-size: 18px;
+  font-weight: bold;
+}
