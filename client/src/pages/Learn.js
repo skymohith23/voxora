@@ -1,11 +1,13 @@
 import React from "react";
 import LearnSignLanguage from "../components/LearnSignLanguage";
 
-export default function Learn() {
+function Learn() {
   return (
     <div className="page">
-      <h1>Learn Sign Language</h1>
+      <h1 className="title">Learn Sign Language</h1>
       <LearnSignLanguage />
     </div>
   );
 }
+
+export default Learn;
