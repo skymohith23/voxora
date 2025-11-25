@@ -6,11 +6,13 @@ import EmergencyButton from "../components/EmergencyButton";
 
 function Home() {
   return (
-    <div>
-      <h1>Voxora</h1>
-      <SignCapture />
-      <TextOutput />
-      <VoiceOutput />
+    <div className="container">
+      <h1>Voxora – Sign to Speech</h1>
+      <div className="row">
+        <SignCapture />
+        <TextOutput />
+        <VoiceOutput />
+      </div>
       <EmergencyButton />
     </div>
   );

@@ -3,7 +3,7 @@ import LearnSignLanguage from "../components/LearnSignLanguage";
 
 function Learn() {
   return (
-    <div>
+    <div className="container">
       <h1>Learn Sign Language</h1>
       <LearnSignLanguage />
     </div>
