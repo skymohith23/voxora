@@ -1,0 +1,19 @@
+nav {
+  width: 100%;
+  background: #111;
+  padding: 15px;
+  display: flex;
+  justify-content: center;
+  gap: 25px;
+}
+
+nav a {
+  color: white;
+  font-size: 18px;
+  text-decoration: none;
+  font-weight: 600;
+}
+
+nav a:hover {
+  color: #00b4d8;
+}
