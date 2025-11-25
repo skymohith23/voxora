@@ -1,3 +1,4 @@
+import LearnSignLanguage from "./components/LearnSignLanguage";
 import React from "react";
 import { BrowserRouter as Router, Routes, Route, Link } from "react-router-dom";
 import Home from "./pages/Home";
@@ -17,6 +18,8 @@ function App() {
       <Routes>
         <Route path="/" element={<Home />} />
         <Route path="/learn" element={<Learn />} />
+        <Route path="/learn" element={<LearnSignLanguage />} />
+
       </Routes>
     </Router>
   );
