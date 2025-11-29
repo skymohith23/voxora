@@ -1,0 +1,55 @@
+##############################
+# FRONTEND (React)
+##############################
+
+client/node_modules/
+client/.pnp
+client/.pnp.js
+client/build
+client/coverage
+
+client/.DS_Store
+client/.env.local
+client/.env.development.local
+client/.env.test.local
+client/.env.production.local
+
+client/npm-debug.log*
+client/yarn-debug.log*
+client/yarn-error.log*
+
+
+##############################
+# BACKEND (Python)
+##############################
+
+server/__pycache__/
+server/**/*.pyc
+
+# Virtual environment
+server/venv/
+server/.venv/
+
+# Auto-generated output
+server/output/
+server/temp/
+server/tts_output/
+
+server/*.log
+server/*.wav
+server/*.mp3
+server/*.dll
+server/*.chm
+server/*.txt
+
+# node modules inside server (you have this folder)
+server/node_modules/
+
+
+##############################
+# GLOBAL
+##############################
+
+*.log
+.DS_Store
+Thumbs.db
