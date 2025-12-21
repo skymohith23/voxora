@@ -1,24 +1,23 @@
 import React from "react";
-import { BrowserRouter as Router, Routes, Route, Link } from "react-router-dom";
-import Home from "./pages/Home";
-import Learn from "./pages/Learn";
+import { BrowserRouter, Routes, Route } from "react-router-dom";
+
+import Home from "./components/Home";
+import LearnSignLanguage from "./components/LearnSignLanguage";
+import VoiceOutput from "./components/VoiceOutput";
+import TextOutput from "./components/TextOutput";
+import SignCapture from "./components/SignCapture";
 
 function App() {
   return (
-    <Router>
-      <nav className="navbar">
-        <h2 className="logo">Voxora</h2>
-        <div className="links">
-          <Link to="/">Home</Link>
-          <Link to="/learn">Learn</Link>
-        </div>
-      </nav>
-
+    <BrowserRouter>
       <Routes>
         <Route path="/" element={<Home />} />
-        <Route path="/learn" element={<Learn />} />
+        <Route path="/learn" element={<LearnSignLanguage />} />
+        <Route path="/voice-output" element={<VoiceOutput />} />
+        <Route path="/text-output" element={<TextOutput />} />
+        <Route path="/sign-capture" element={<SignCapture />} />
       </Routes>
-    </Router>
+    </BrowserRouter>
   );
 }
 

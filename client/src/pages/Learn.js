@@ -3,8 +3,8 @@ import LearnSignLanguage from "../components/LearnSignLanguage";
 
 function Learn() {
   return (
-    <div className="container">
-      <h1>Learn Sign Language</h1>
+    <div className="page">
+      <h1 className="title">Learn Sign Language</h1>
       <LearnSignLanguage />
     </div>
   );
