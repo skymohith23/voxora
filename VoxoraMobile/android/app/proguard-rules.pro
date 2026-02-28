@@ -8,3 +8,6 @@
 #   http://developer.android.com/guide/developing/tools/proguard.html
 
 # Add any project specific keep options here:
+-dontwarn com.swmansion.reanimated.**
+-keep class com.swmansion.reanimated.** { *; }
+-dontwarn com.facebook.react.uimanager.layoutanimation.**
