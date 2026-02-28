@@ -1,24 +1,36 @@
-import React from "react";
-import { BrowserRouter, Routes, Route } from "react-router-dom";
+import React, { useEffect, useState } from "react";
+import { NavigationContainer } from "@react-navigation/native";
+import { createNativeStackNavigator } from "@react-navigation/native-stack";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 
-import Home from "./components/Home";
-import LearnSignLanguage from "./components/LearnSignLanguage";
-import VoiceOutput from "./components/VoiceOutput";
-import TextOutput from "./components/TextOutput";
-import SignCapture from "./components/SignCapture";
+import Login from "./pages/Login";
+import Dashboard from "./pages/Dashboard";
+import EmergencyCall from "./pages/EmergencyCall";
 
-function App() {
+const Stack = createNativeStackNavigator();
+
+export default function App() {
+  const [isLoading, setIsLoading] = useState(true);
+  const [userToken, setUserToken] = useState(null);
+
+  useEffect(() => {
+    const checkLogin = async () => {
+      const token = await AsyncStorage.getItem("userToken");
+      setUserToken(token);
+      setIsLoading(false);
+    };
+    checkLogin();
+  }, []);
+
+  if (isLoading) return null;
+
   return (
-    <BrowserRouter>
-      <Routes>
-        <Route path="/" element={<Home />} />
-        <Route path="/learn" element={<LearnSignLanguage />} />
-        <Route path="/voice-output" element={<VoiceOutput />} />
-        <Route path="/text-output" element={<TextOutput />} />
-        <Route path="/sign-capture" element={<SignCapture />} />
-      </Routes>
-    </BrowserRouter>
+    <NavigationContainer>
+      <Stack.Navigator initialRouteName={userToken ? "Dashboard" : "Login"}>
+        <Stack.Screen name="Login" component={Login} options={{ headerShown: false }} />
+        <Stack.Screen name="Dashboard" component={Dashboard} options={{ title: "Voxora Dashboard" }} />
+        <Stack.Screen name="EmergencyCall" component={EmergencyCall} options={{ title: "Emergency Call" }} />
+      </Stack.Navigator>
+    </NavigationContainer>
   );
 }
-
-export default App;

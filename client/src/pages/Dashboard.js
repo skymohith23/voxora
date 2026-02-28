@@ -1,53 +1,88 @@
-// client/src/pages/Dashboard.js
-import React from "react";
-import { useNavigate } from "react-router-dom";
+import React, { useEffect, useState } from "react";
+import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Alert } from "react-native";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import axiosInst from "../utils/api_native";
 
-export default function Dashboard() {
-  const nav = useNavigate();
-  const user = JSON.parse(localStorage.getItem("user") || "{}");
+export default function Dashboard({ navigation }) {
+  const [user, setUser] = useState(null);
+
+  useEffect(() => {
+    const loadUser = async () => {
+      try {
+        const res = await axiosInst.get("/me");
+        setUser(res.data);
+      } catch (e) {
+        // If token is invalid, force logout
+        handleLogout();
+      }
+    };
+    loadUser();
+  }, []);
+
+  const handleLogout = async () => {
+    await AsyncStorage.removeItem("userToken");
+    navigation.replace("Login");
+  };
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-[#130426] via-[#2a005d] to-[#1a0b3a] p-6">
-      <div className="max-w-3xl mx-auto">
-        <header className="flex items-center justify-between mb-6">
-          <div>
-            <h1 className="text-3xl font-bold text-white">Welcome, {user?.name || user?.email || "User"}</h1>
-            <p className="text-gray-300 mt-1">Ready when you are — pick an emergency action</p>
-          </div>
-          <div>
-            <button onClick={() => nav("/profile")} className="bg-white/6 text-white px-3 py-2 rounded-lg">Profile</button>
-          </div>
-        </header>
+    <ScrollView style={styles.container}>
+      <View style={styles.header}>
+        <View>
+          <Text style={styles.welcome}>Welcome, {user?.name || "User"}</Text>
+          <Text style={styles.subtitle}>Ready when you are — pick an action</Text>
+        </View>
+        <TouchableOpacity onPress={() => navigation.navigate("Profile")} style={styles.profileBtn}>
+          <Text style={styles.btnText}>Profile</Text>
+        </TouchableOpacity>
+      </View>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <button onClick={() => nav("/emergency-call")}
-            className="p-5 rounded-2xl bg-gradient-to-tr from-red-500 to-red-600 text-white text-lg font-semibold shadow-lg">
-            Emergency Call
-          </button>
+      <View style={styles.grid}>
+        <TouchableOpacity 
+          style={[styles.card, { backgroundColor: '#FF3B30' }]} 
+          onPress={() => navigation.navigate("EmergencyCall")}
+        >
+          <Text style={styles.cardTitle}>Emergency Call</Text>
+        </TouchableOpacity>
 
-          <button onClick={() => nav("/emergency-text")}
-            className="p-5 rounded-2xl bg-gradient-to-tr from-purple-600 to-purple-700 text-white text-lg font-semibold shadow-lg">
-            Emergency Text
-          </button>
+        <TouchableOpacity 
+          style={[styles.card, { backgroundColor: '#7c3aed' }]} 
+          onPress={() => navigation.navigate("EmergencyText")}
+        >
+          <Text style={styles.cardTitle}>Emergency Text</Text>
+        </TouchableOpacity>
 
-          <button onClick={() => nav("/contacts")}
-            className="p-5 rounded-2xl bg-white/6 text-white text-lg font-semibold shadow-lg">
-            Emergency Contacts
-          </button>
+        <TouchableOpacity 
+          style={[styles.card, { backgroundColor: 'rgba(255,255,255,0.06)' }]} 
+          onPress={() => navigation.navigate("Contacts")}
+        >
+          <Text style={styles.cardTitle}>Contacts</Text>
+        </TouchableOpacity>
 
-          <button onClick={() => nav("/sign-detection")}
-            className="p-5 rounded-2xl bg-green-600 text-white text-lg font-semibold shadow-lg">
-            Sign Detection
-          </button>
-        </div>
+        <TouchableOpacity 
+          style={[styles.card, { backgroundColor: '#10b981' }]} 
+          onPress={() => navigation.navigate("SignDetection")}
+        >
+          <Text style={styles.cardTitle}>Sign Detection</Text>
+        </TouchableOpacity>
+      </View>
 
-        <div className="mt-6">
-          <button onClick={() => {
-            localStorage.removeItem("user");
-            window.location.href = "/";
-          }} className="w-full py-3 bg-white/6 text-white rounded-xl">Logout</button>
-        </div>
-      </div>
-    </div>
+      <TouchableOpacity style={styles.logoutBtn} onPress={handleLogout}>
+        <Text style={styles.logoutText}>Logout</Text>
+      </TouchableOpacity>
+    </ScrollView>
   );
 }
+
+const styles = StyleSheet.create({
+  container: { flex: 1, backgroundColor: "#130426", padding: 20 },
+  header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 30, marginTop: 20 },
+  welcome: { color: "white", fontSize: 24, fontWeight: "bold" },
+  subtitle: { color: "#ccc", fontSize: 14, marginTop: 5 },
+  profileBtn: { backgroundColor: "rgba(255,255,255,0.1)", padding: 10, borderRadius: 10 },
+  btnText: { color: "white" },
+  grid: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between' },
+  card: { width: '48%', height: 120, borderRadius: 20, padding: 20, justifyContent: 'center', marginBottom: 15, elevation: 5 },
+  cardTitle: { color: 'white', fontSize: 18, fontWeight: 'bold', textAlign: 'center' },
+  logoutBtn: { width: "100%", padding: 15, backgroundColor: "rgba(255,255,255,0.06)", borderRadius: 15, marginTop: 20, alignItems: 'center' },
+  logoutText: { color: 'white', fontWeight: 'bold' }
+});

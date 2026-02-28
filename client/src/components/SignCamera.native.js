@@ -1,125 +1,87 @@
-// src/components/SignCamera.native.js
-import React, { useEffect, useRef, useState } from "react";
-import { View, Text, ActivityIndicator } from "react-native";
-import { Camera } from "expo-camera";
-import * as ImageManipulator from "expo-image-manipulator";
-import * as FileSystem from "expo-file-system";
-import { apiRecognizeBase64 } from "../utils/api_native"; // see api helper below
-import { useIsFocused } from "@react-navigation/native";
+import React, { useState, useEffect, useCallback } from "react";
+import { View, Text, ActivityIndicator, StyleSheet } from "react-native";
+import { Camera, useCameraDevice, useFrameProcessor } from 'react-native-vision-camera';
+import { useTensorflowModel } from 'react-native-fast-tflite';
+import { useResizePlugin } from 'vision-camera-resize-plugin';
+import { runOnJS } from 'react-native-reanimated';
 
-/**
- * Props:
- *  - onRecognizedText(label: string)
- *  - captureInterval (ms) default 900
- *  - outputSize default 224
- */
-export default function SignCameraNative({
-  onRecognizedText,
-  captureInterval = 900,
-  outputSize = 224,
-}) {
-  const cameraRef = useRef(null);
-  const [hasPermission, setHasPermission] = useState(null);
-  const inFlight = useRef(false);
-  const isFocused = useIsFocused();
+export default function SignCameraNative({ onRecognizedText }) {
+  const device = useCameraDevice('front');
+  const { resize } = useResizePlugin();
+  const [hasPermission, setHasPermission] = useState(false);
+  
+  // Load your local TFLite model
+  const model = useTensorflowModel(require('../assets/model.tflite'));
 
   useEffect(() => {
     (async () => {
-      const { status } = await Camera.requestCameraPermissionsAsync();
-      setHasPermission(status === "granted");
+      const status = await Camera.requestCameraPermission();
+      setHasPermission(status === 'granted');
     })();
   }, []);
 
-  useEffect(() => {
-    let tid;
-    if (hasPermission && isFocused) {
-      // start polling
-      tid = setInterval(() => {
-        captureAndSend().catch(() => {});
-      }, captureInterval);
+  // Use a ref to prevent spamming the same character 30 times a second
+  const lastRecognized = React.useRef("");
+
+  const handleDetection = useCallback((outputs) => {
+    // Logic to convert model array output to a label
+    // This depends on how your model was trained (Classification vs Detection)
+    const label = decodeTFLiteOutput(outputs); 
+    
+    if (label && label !== lastRecognized.current) {
+      lastRecognized.current = label;
+      onRecognizedText?.(label);
     }
-    return () => {
-      if (tid) clearInterval(tid);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hasPermission, isFocused]);
+  }, [onRecognizedText]);
 
-  async function captureAndSend() {
-    try {
-      if (inFlight.current) return;
-      if (!cameraRef.current) return;
-
-      inFlight.current = true;
-
-      // take picture with low quality to minimize payload
-      const photo = await cameraRef.current.takePictureAsync({
-        quality: 0.6,
-        base64: false, // we'll read file and manipulate
-        skipProcessing: true,
+  const frameProcessor = useFrameProcessor((frame) => {
+    'worklet';
+    if (model.model != null) {
+      // 1. Resize the frame to 224x224 (standard for most mobile AI)
+      const resized = resize(frame, { 
+        scale: { width: 224, height: 224 }, 
+        pixelFormat: 'rgb',
+        dataType: 'uint8' 
       });
 
-      // Optional: you can crop to center square or full image. Here we crop center square.
-      const { uri, width, height } = photo;
-      const size = Math.min(width, height);
-      const cropX = Math.floor((width - size) / 2);
-      const cropY = Math.floor((height - size) / 2);
-
-      // Resize+crop to outputSize x outputSize
-      const manipResult = await ImageManipulator.manipulateAsync(
-        uri,
-        [
-          { crop: { originX: cropX, originY: cropY, width: size, height: size } },
-          { resize: { width: outputSize, height: outputSize } },
-        ],
-        { compress: 0.8, base64: true, format: ImageManipulator.SaveFormat.JPEG }
-      );
-
-      const base64 = manipResult.base64;
-      if (!base64) {
-        inFlight.current = false;
-        return;
-      }
-
-      // send to backend; backend expects data:image/jpeg;base64,... OR raw base64
-      const dataUrl = "data:image/jpeg;base64," + base64;
-      let res;
-      try {
-        res = await apiRecognizeBase64(dataUrl);
-      } catch (e) {
-        // network / server failure -> ignore but unflag inFlight
-        inFlight.current = false;
-        return;
-      }
-
-      const label = (res?.data?.recognized_text || "").toString().trim();
-      if (label) {
-        if (/^[a-z]$/i.test(label)) {
-          onRecognizedText && onRecognizedText(label.toUpperCase());
-        } else {
-          // multi-character words pass-through
-          onRecognizedText && onRecognizedText(label);
-        }
-      }
-      inFlight.current = false;
-    } catch (err) {
-      inFlight.current = false;
-      // silent fail
+      // 2. Run inference on the GPU
+      const outputs = model.model.runSync([resized]);
+      
+      // 3. Jump back to JS thread to handle the text
+      runOnJS(handleDetection)(outputs);
     }
-  }
+  }, [model, handleDetection]);
 
-  if (hasPermission === null) return <View style={{ flex: 1, justifyContent: "center", alignItems: "center" }}><ActivityIndicator /></View>;
-  if (hasPermission === false) return <View style={{ padding: 20 }}><Text>No camera permission</Text></View>;
+  if (!hasPermission) return <Text style={styles.info}>Grant Camera Permission</Text>;
+  if (!device) return <ActivityIndicator size="large" />;
 
   return (
-    <View style={{ width: "100%", aspectRatio: 3 / 4, borderRadius: 12, overflow: "hidden" }}>
-      {/* camera view */}
+    <View style={styles.container}>
       <Camera
-        ref={cameraRef}
-        style={{ flex: 1 }}
-        type={Camera.Constants.Type.front}
-        ratio="16:9"
-        pictureSize="640x480"
+        style={StyleSheet.absoluteFill}
+        device={device}
+        isActive={true}
+        frameProcessor={frameProcessor}
+        pixelFormat="yuv" 
       />
     </View>
   );
 }
+
+// TODO: Update this based on your model's specific labels
+function decodeTFLiteOutput(outputs) {
+  // Example: Your model returns [0.1, 0.8, 0.1] for ['A', 'B', 'C']
+  // This finds the index of the highest probability
+  const scores = outputs[0]; 
+  const maxScore = Math.max(...scores);
+  if (maxScore < 0.7) return null; // Confidence threshold
+  
+  const index = scores.indexOf(maxScore);
+  const labels = ["A", "B", "C", "HELLO", "HELP"]; // Replace with your labels
+  return labels[index];
+}
+
+const styles = StyleSheet.create({
+  container: { flex: 1, backgroundColor: '#000', borderRadius: 15, overflow: 'hidden' },
+  info: { color: 'white', textAlign: 'center', marginTop: 50 }
+});
