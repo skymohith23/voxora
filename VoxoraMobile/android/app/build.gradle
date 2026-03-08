@@ -1,52 +1,57 @@
 apply plugin: "com.android.application"
 apply plugin: "com.facebook.react"
 apply plugin: "kotlin-android"
-/**
- * The react.gradle file registers a task for each build variant (e.g. bundleDebugJsAndAssets)
- * This handles the bridge between your JavaScript and Android.
- */
+
 react {
-    /* Standard settings for stable versions */
     hermesCommand = "../../node_modules/react-native/sdks/hermesc/%OS-BIN%/hermesc"
 }
 
 def enableProguardInReleaseBuilds = false
-// Updated to a stable JSC flavor
 def jscFlavor = 'org.webkit:android-jsc:+'
 
 android {
     ndkVersion rootProject.ext.ndkVersion
-    buildToolsVersion rootProject.ext.buildToolsVersion
-    compileSdk rootProject.ext.compileSdkVersion
+    buildToolsVersion "35.0.0"
+    compileSdk 35
 
     namespace "com.voxoramobile"
     defaultConfig {
         applicationId "com.voxoramobile"
         minSdk rootProject.ext.minSdkVersion
-        targetSdk rootProject.ext.targetSdkVersion
+        targetSdk 35
         versionCode 1
         versionName "1.0"
+        ndk {
+            abiFilters "armeabi-v7a", "arm64-v8a", "x86", "x86_64"
+        }
     }
 
-    // ADDED: Force Java 17 compatibility for Java source code
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_17
         targetCompatibility JavaVersion.VERSION_17
     }
 
-    // ADDED: Force Java 17 compatibility for Kotlin source code
     kotlinOptions {
         jvmTarget = "17"
     }
 
     packagingOptions {
-        jniLibs {
-            useLegacyPackaging (findProperty('expo.useLegacyPackaging') == 'true')
+       jniLibs {
+            // Keep Expo's dynamic check, but default to true for TFLite
+            useLegacyPackaging (findProperty('expo.useLegacyPackaging') == 'true' ?: true)
         }
         pickFirst '**/libVisionCamera.so'
         pickFirst '**/libworklets.so'
         pickFirst '**/libc++_shared.so'
         pickFirst '**/libhermes.so'
+        
+        pickFirst 'lib/**/libtensorflowlite_flex_jni.so'
+        pickFirst 'lib/**/libtensorflowlite_jni.so'
+        
+        pickFirst 'lib/x86/libc++_shared.so'
+        pickFirst 'lib/x86_64/libc++_shared.so'
+        pickFirst 'lib/armeabi-v7a/libc++_shared.so'
+        pickFirst 'lib/arm64-v8a/libc++_shared.so'
     }
 
     signingConfigs {
@@ -71,7 +76,6 @@ android {
 }
 
 dependencies {
-    // The core React Native Android library
     implementation("com.facebook.react:react-android")
 
     if (hermesEnabled.toBoolean()) {
@@ -79,19 +83,14 @@ dependencies {
     } else {
         implementation jscFlavor
     }
+    
     implementation project(':react-native-worklets-core')
     implementation project(':react-native-fast-tflite')
+    implementation 'com.google.mlkit:face-detection:16.1.7'
+    // Stable TFLite versions
+    implementation 'com.google.mlkit:face-mesh-detection:16.0.0-beta3'
+    implementation 'org.tensorflow:tensorflow-lite:2.16.1'
+    implementation 'org.tensorflow:tensorflow-lite-select-tf-ops:2.16.1'
 }
 
-// CRITICAL: This is the stable autolinking script that replaces the 0.84 'autolinkLibrariesWithApp'
 apply from: file("../../node_modules/@react-native-community/cli-platform-android/native_modules.gradle"); applyNativeModulesAppBuildGradle(project)
-tasks.configureEach { task ->
-    if (task.name.contains("configureCMakeDebug") && task.project.name == "react-native-vision-camera") {
-        task.depends_on(":react-native-worklets-core:bundleDebugAar")
-    }
-}
-tasks.whenTaskAdded { task ->
-    if (task.name.contains('configureCMakeDebug') && task.project.name == 'react-native-vision-camera') {
-        task.depends_on(':react-native-worklets-core:bundleDebugAar')
-    }
-}

@@ -1,8 +1,11 @@
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="com.voxoramobile"> 
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
+    <uses-permission android:name="android.permission.CALL_PHONE" />
+<uses-permission android:name="android.permission.SEND_SMS" />
 
     <application
       android:name=".MainApplication"
@@ -12,8 +15,11 @@
       android:allowBackup="false"
       android:theme="@style/AppTheme"
       android:usesCleartextTraffic="true" 
-      android:extractNativeLibs="true"
+      android:largeHeap="true"
       android:supportsRtl="true">
+      <meta-data
+        android:name="com.google.mlkit.vision.DEPENDENCIES"
+        android:value="face" />
       
       <activity
         android:name=".MainActivity"

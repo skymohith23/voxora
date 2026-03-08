@@ -1,44 +1,44 @@
 buildscript {
     ext {
-        buildToolsVersion = "34.0.0"
-        minSdkVersion = 24
-        compileSdkVersion = 34
-        targetSdkVersion = 34
+        buildToolsVersion = "35.0.0"
+        minSdkVersion = 26
+        compileSdkVersion = 35
+        targetSdkVersion = 35
         ndkVersion = "26.1.10909125"
-        kotlinVersion = "1.8.0"
+        kotlinVersion = "1.8.10"
     }
     repositories {
         google()
         mavenCentral()
     }
     dependencies {
-        // Use 8.3.0 to match Gradle 8.8
-        classpath("com.android.tools.build:gradle:8.3.0")
+        classpath("com.android.tools.build:gradle:8.6.0")
         classpath("com.facebook.react:react-native-gradle-plugin")
         classpath("org.jetbrains.kotlin:kotlin-gradle-plugin:$kotlinVersion")
     }
 }
 
-// REMOVED: id("com.facebook.react.rootproject") - This is 0.84 only!
-
 allprojects {
     repositories {
-        maven {
-            url("$rootDir/../node_modules/react-native/android")
-        }
-        maven {
-            url("$rootDir/../node_modules/jsc-android/dist")
-        }
-        mavenCentral()
+        maven { url("$rootDir/../node_modules/react-native/android") }
+        maven { url("$rootDir/../node_modules/jsc-android/dist") }
+        
         google()
+        mavenCentral() // Fixed: was central()
+        
+        maven {
+            name 'ossrh-snapshot'
+            url 'https://oss.sonatype.org/content/repositories/snapshots'
+        }
+        
         maven { url "https://www.jitpack.io" }
     }
 }
+
 subprojects {
     afterEvaluate { project ->
         if (project.hasProperty('android')) {
             project.android {
-                // 1. Identity Fallback
                 if (namespace == null) {
                     try {
                         namespace = project.group
@@ -47,14 +47,12 @@ subprojects {
                     }
                 }
 
-                // 2. JAVA SIDE: Force Java 17
                 compileOptions {
                     sourceCompatibility JavaVersion.VERSION_17
                     targetCompatibility JavaVersion.VERSION_17
                 }
             }
 
-            // 3. KOTLIN SIDE: Force JVM Target 17 + Metadata Fix
             project.tasks.withType(org.jetbrains.kotlin.gradle.tasks.KotlinCompile).all {
                 kotlinOptions {
                     jvmTarget = "17"
@@ -65,27 +63,10 @@ subprojects {
                         "-Xno-param-assertions"]
                 }
             }
-
-            // 4. Manifest Stripping Fix
-            project.tasks.matching { it.name.startsWith("process") && it.name.endsWith("Manifest") }.configureEach {
-                doFirst {
-                    def manifestFile = file("${project.projectDir}/src/main/AndroidManifest.xml")
-                    if (manifestFile.exists()) {
-                        def content = manifestFile.getText('UTF-8')
-                        if (content.contains('package=')) {
-                            println "STABLE-FIX: Stripping package attribute from ${project.name}"
-                            content = content.replaceAll(/package="[^"]*"/, '')
-                            manifestFile.write(content, 'UTF-8')
-                        }
-                    }
-                }
-            }
         }
     }
 }
 
-// 5. RESOLUTION STRATEGY: Forces the project back to API 34 compatibility
-// ADD THIS BLOCK AT THE VERY BOTTOM OF THE FILE
 allprojects {
     configurations.all {
         resolutionStrategy {
@@ -96,5 +77,3 @@ allprojects {
         }
     }
 }
-
-

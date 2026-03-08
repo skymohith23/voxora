@@ -1,5 +1,16 @@
-import React, { useEffect, useState, useRef, useCallback } from "react";
-import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Alert, TextInput } from "react-native";
+import React, { useState, useEffect, useRef, useCallback } from "react";
+import { 
+  View, 
+  Text, 
+  StyleSheet, 
+  TouchableOpacity, 
+  ScrollView, 
+  Alert, 
+  TextInput, 
+  PermissionsAndroid, 
+  Platform,
+  Linking 
+} from "react-native";
 import { Picker } from '@react-native-picker/picker';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import Tts from 'react-native-tts';
@@ -16,6 +27,30 @@ export default function EmergencyCall({ navigation }) {
 
   // --- Refs ---
   const socket = useRef(null);
+
+  // --- Permissions Handler ---
+  const requestEmergencyPermissions = async () => {
+    if (Platform.OS === 'android') {
+      try {
+        const granted = await PermissionsAndroid.requestMultiple([
+          PermissionsAndroid.PERMISSIONS.CALL_PHONE,
+          PermissionsAndroid.PERMISSIONS.SEND_SMS,
+        ]);
+        
+        const isCallGranted = granted['android.permission.CALL_PHONE'] === PermissionsAndroid.RESULTS.GRANTED;
+        const isSmsGranted = granted['android.permission.SEND_SMS'] === PermissionsAndroid.RESULTS.GRANTED;
+
+        if (!isCallGranted || !isSmsGranted) {
+          Alert.alert(
+            "Permissions Required",
+            "Emergency features require Call and SMS permissions to function correctly."
+          );
+        }
+      } catch (err) {
+        console.warn("Permission Error:", err);
+      }
+    }
+  };
 
   // --- Data Loading ---
   const loadData = async () => {
@@ -43,11 +78,19 @@ export default function EmergencyCall({ navigation }) {
   };
 
   useEffect(() => {
+    requestEmergencyPermissions();
     loadData();
 
     Tts.setDefaultLanguage('en-US');
     Tts.setDefaultRate(0.5);
 
+    return () => {
+      if (socket.current) socket.current.close();
+      Tts.stop();
+    };
+  }, []);
+
+  useEffect(() => {
     if (userEmail) {
       const wsUrl = `ws://192.168.1.4:8000/ws/call/${userEmail}`;
       socket.current = new WebSocket(wsUrl);
@@ -61,11 +104,6 @@ export default function EmergencyCall({ navigation }) {
 
       socket.current.onerror = (e) => console.log("WS Error:", e.message);
     }
-
-    return () => {
-      if (socket.current) socket.current.close();
-      Tts.stop();
-    };
   }, [userEmail]);
 
   // --- Handlers ---
@@ -75,6 +113,14 @@ export default function EmergencyCall({ navigation }) {
     setTimeout(() => {
       navigation.goBack();
     }, 150);
+  };
+
+  const makePhoneCall = (phoneNumber) => {
+    if (phoneNumber) {
+      Linking.openURL(`tel:${phoneNumber}`);
+    } else {
+      Alert.alert("Error", "This contact does not have a phone number saved.");
+    }
   };
 
   const broadcastLiveSign = (text) => {
@@ -106,27 +152,40 @@ export default function EmergencyCall({ navigation }) {
 
   const sendText = async () => {
     if (!toEmail) return Alert.alert("Error", "Select a contact");
-    if (!word.trim()) return Alert.alert("Error", "No message detected");
+    
+    const selectedContact = contacts.find(c => (c.id === toEmail || c.email === toEmail));
 
     try {
-      await axiosInst.post("/emergency/send-text", {
-        to_user: toEmail,
-        message: word.trim()
-      });
+      if (word.trim()) {
+        await axiosInst.post("/emergency/send-text", {
+          to_user: toEmail,
+          message: word.trim()
+        });
+      }
       
-      Alert.alert("Success", "Emergency Alert Sent!", [
-        { text: "OK", onPress: handleSafeBack }
-      ]);
+      Alert.alert(
+        "Emergency Action", 
+        "Transcript sent. Would you like to place the call now?", 
+        [
+          { text: "Cancel", style: "cancel", onPress: handleSafeBack },
+          { 
+            text: "CALL NOW", 
+            onPress: () => {
+              makePhoneCall(selectedContact?.phone_number || selectedContact?.phone);
+            } 
+          }
+        ]
+      );
+      
       setWord("");
     } catch (e) {
-      Alert.alert("Failed", "Network Error: Could not send text");
+      Alert.alert("Failed", "Network Error: Could not send transcript, but you can still call.");
+      makePhoneCall(selectedContact?.phone_number || selectedContact?.phone);
     }
   };
 
-  // --- Render ---
   return (
     <View style={{ flex: 1, backgroundColor: "#130426" }}> 
-      {/* 1. FIXED HEADER AND CAMERA (Outside ScrollView) */}
       <View style={styles.fixedHeader}>
         <View style={styles.header}>
           <Text style={styles.title}>Emergency Call</Text>
@@ -140,10 +199,8 @@ export default function EmergencyCall({ navigation }) {
         </View>
       </View>
 
-      {/* 2. SCROLLABLE FORM SECTION */}
       <ScrollView style={styles.formScroll} contentContainerStyle={{ paddingBottom: 40 }}>
         <View style={styles.form}>
-          {/* Contact Management */}
           <View style={styles.addContactSection}>
             <Text style={styles.label}>Quick Add Contact (Email):</Text>
             <TextInput
@@ -158,7 +215,6 @@ export default function EmergencyCall({ navigation }) {
             </TouchableOpacity>
           </View>
 
-          {/* Contact Selector */}
           <Text style={styles.label}>Connected To (Call):</Text>
           <View style={styles.pickerWrapper}>
             <Picker
@@ -178,7 +234,6 @@ export default function EmergencyCall({ navigation }) {
             </Picker>
           </View>
 
-          {/* Live Preview */}
           <Text style={styles.label}>AI Voice Broadcast Preview:</Text>
           <View style={styles.previewBox}>
             <Text style={styles.previewText}>{word || "Waiting for signs..."}</Text>
@@ -188,7 +243,6 @@ export default function EmergencyCall({ navigation }) {
             <Text style={styles.clearText}>Clear Call Transcript</Text>
           </TouchableOpacity>
 
-          {/* Action Button */}
           <TouchableOpacity style={styles.sendBtn} onPress={sendText}>
             <Text style={styles.sendText}>End Call / Send Transcript</Text>
           </TouchableOpacity>

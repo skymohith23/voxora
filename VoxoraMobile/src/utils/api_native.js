@@ -1,6 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-// 1. CHANGE THIS to your laptop's IP (e.g., 192.168.1.5) for your physical phone
+// 1. CHANGE THIS to your laptop's IP (e.) for your physical phone
 // Remove the space between http:// and the IP address
 export const API_BASE = "http://192.168.1.4:8000";
 

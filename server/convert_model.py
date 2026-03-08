@@ -1,27 +1,47 @@
 import tensorflow as tf
-import os
 
-# Use the .h5 version instead
-model_path = os.path.join('asl_model', 'asl_model.h5')
+h5_path = r"D:\voxora\server\asl_model.h5"
+output_path = r"D:\voxora\server\asl_model_fixed.tflite"
 
-print(f"Loading H5 model from: {model_path}")
+print("Loading model...")
+model = tf.keras.models.load_model(h5_path, compile=False)
 
-# Load the model
-model = tf.keras.models.load_model(model_path)
+# 1. Define a Concrete Function to lock the batch size to 1
+# This is the 'magic' that fixes the tf.TensorListReserve error
+run_model = tf.function(lambda x: model(x))
+concrete_func = run_model.get_concrete_function(
+    tf.TensorSpec([1, 30, 258], model.inputs[0].dtype)
+)
 
-# Use the TFLite converter with the 'from_keras_model' method
-# but we'll add a setting to allow 'Custom Ops' if your model uses them
-converter = tf.lite.TFLiteConverter.from_keras_model(model)
-converter.optimizations = [tf.lite.Optimize.DEFAULT] # This makes it faster on mobile
-converter.target_spec.supported_ops = [
-    tf.lite.OpsSet.TFLITE_BUILTINS, # enable TensorFlow Lite ops.
-    tf.lite.OpsSet.SELECT_TF_OPS # enable TensorFlow ops if TFLite doesn't support them.
-]
+try:
+    print("Attempting Conversion via Concrete Function...")
+    # 2. Use the concrete function instead of the raw model
+    converter = tf.lite.TFLiteConverter.from_concrete_functions([concrete_func], model)
+    
+    # Standard mobile settings
+    converter.target_spec.supported_ops = [tf.lite.OpsSet.TFLITE_BUILTINS]
+    converter._experimental_lower_tensor_list_ops = True
+    converter.optimizations = [tf.lite.Optimize.DEFAULT]
 
-tflite_model = converter.convert()
+    tflite_model = converter.convert()
+    with open(output_path, 'wb') as f:
+        f.write(tflite_model)
+    print(f"✅ Success! Fixed model saved to: {output_path}")
 
-# Save it
-with open('asl_model.tflite', 'wb') as f:
-    f.write(tflite_model)
-
-print("Success! asl_model.tflite is ready.")
+except Exception as e:
+    print(f"⚠️ Standard conversion failed: {e}")
+    print("🔄 Running Fallback with SELECT_TF_OPS...")
+    
+    # FALLBACK: If standard fails, we enable the Flex Delegate
+    # Since your Android app is already configured for Flex, this WILL work.
+    converter = tf.lite.TFLiteConverter.from_concrete_functions([concrete_func], model)
+    converter.target_spec.supported_ops = [
+        tf.lite.OpsSet.TFLITE_BUILTINS, 
+        tf.lite.OpsSet.SELECT_TF_OPS 
+    ]
+    converter._experimental_lower_tensor_list_ops = False # Required for Flex LSTMs
+    
+    tflite_model = converter.convert()
+    with open(output_path, 'wb') as f:
+        f.write(tflite_model)
+    print(f"✅ Success (with Fallback)! Model saved to: {output_path}")
