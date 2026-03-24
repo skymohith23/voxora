@@ -12,6 +12,7 @@
   "dependencies": {
     "cors": "^2.8.5",
     "express": "^5.1.0",
+    "react-native-fs": "^2.20.0",
     "react-native-worklets-core": "^1.6.3"
   }
 }

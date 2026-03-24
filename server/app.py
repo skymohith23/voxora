@@ -1,146 +1,176 @@
 import cv2
 import mediapipe as mp
 import numpy as np
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-import threading
+import tensorflow as tf
 import json
+import threading
+import os
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 
-# --- 1. BiLSTM WITH ATTENTION ARCHITECTURE ---
-class VoxoraBiLSTM(nn.Module):
-    def __init__(self, input_size=81, hidden_size=128, num_layers=2, num_classes=2000):
-        super(VoxoraBiLSTM, self).__init__()
-        self.lstm = nn.LSTM(
-            input_size, 
-            hidden_size, 
-            num_layers, 
-            batch_first=True, 
-            bidirectional=True
-        )
-        # Attention Layer to match lstm.yaml
-        self.attention = nn.Linear(hidden_size * 2, 1)
-        self.fc = nn.Linear(hidden_size * 2, num_classes)
-
-    def forward(self, x):
-        # x: (Batch, Time, Features)
-        lstm_out, _ = self.lstm(x) 
-        
-        # Calculate Attention Weights
-        attn_weights = F.softmax(self.attention(lstm_out), dim=1)
-        context = torch.sum(attn_weights * lstm_out, dim=1)
-        
-        out = self.fc(context)
-        return out
-
-# --- 2. INITIALIZATION ---
 app = Flask(__name__)
 CORS(app)
-model = None
-class_to_word = {}
+
+# --- 1. SETTINGS & PATHS ---
+MODEL_PATH = "model.tflite"
+LABEL_PATH = "sign_to_prediction_index_map.json"
+
+try:
+    with open(LABEL_PATH, 'r') as f:
+        label_map = json.load(f)
+        index_to_word = {int(v): k for k, v in label_map.items()}
+    print(f"✅ Loaded {len(index_to_word)} labels.")
+    
+    # --- LABEL MAP CHECK ---
+    # Run this to see exactly how 'help' is spelled in your JSON
+    help_keys = [k for k in label_map.keys() if 'hel' in k.lower()]
+    print(f"🔍 Label Map Check: Found keys similar to 'help': {help_keys}")
+    
+except Exception as e:
+    print(f"❌ Label Load Error: {e}")
+
+try:
+    os.environ['TF_LITE_DISABLE_XNNPACK'] = '1'
+    interpreter = tf.lite.Interpreter(
+        model_path=MODEL_PATH,
+        experimental_delegates=None,
+        num_threads=4
+    )
+    interpreter.allocate_tensors()
+    input_details = interpreter.get_input_details()
+    output_details = interpreter.get_output_details()
+    print(f"✅ Model Loaded! XNNPack Hard-Disabled.")
+except Exception as e:
+    print(f"❌ Model Load Error: {e}")
+
 mp_lock = threading.Lock()
-
 mp_holistic = mp.solutions.holistic
-holistic = mp_holistic.Holistic(static_image_mode=False, min_detection_confidence=0.5)
+holistic = mp_holistic.Holistic(
+    static_image_mode=False, 
+    model_complexity=1,       
+    smooth_landmarks=True,
+    min_detection_confidence=0.5,
+    min_tracking_confidence=0.5
+)
 
-CHECKPOINT_PATH = r"D:\voxora\openhands_model\wlasl\lstm\epoch=109-step=49059.ckpt"
-LABEL_MAP_PATH = r"D:\voxora\openhands_model\splits\asl2000.json"
-
-try:
-    with open(LABEL_MAP_PATH, 'r') as f:
-        data = json.load(f)
-        for entry in data:
-            class_to_word[len(class_to_word)] = entry['gloss']
-    print(f"✅ Loaded {len(class_to_word)} labels.")
-except Exception as e:
-    print(f"⚠️ Label map failed: {e}")
-
-try:
-    model = VoxoraBiLSTM(input_size=81, hidden_size=128, num_layers=2, num_classes=2000)
-    checkpoint = torch.load(CHECKPOINT_PATH, map_location='cpu')
-    state_dict = checkpoint.get('state_dict', checkpoint)
-    
-    # Clean keys for manual loading
-    new_state_dict = {}
-    for k, v in state_dict.items():
-        name = k.replace("model.", "").replace("encoder.", "").replace("decoder.", "")
-        new_state_dict[name] = v
-        
-    model.load_state_dict(new_state_dict, strict=False)
-    model.eval()
-    print("✅ Model with Attention Loaded Successfully!")
-except Exception as e:
-    print(f"❌ Error Building Model: {e}")
-
-# --- 3. LANDMARK EXTRACTION (minimal_27 mapping) ---
+# --- 2. LANDMARK EXTRACTION ---
 def extract_landmarks(frame):
-    results = holistic.process(frame)
-    
-    def get_specific_pts(res, indices):
-        pts = []
-        if res and res.landmark:
-            for idx in indices:
-                if idx < len(res.landmark):
-                    l = res.landmark[idx]
-                    # Try raw coordinates first (no mirror flip yet to isolate the issue)
-                    pts.append([l.x, l.y, l.z])
-                else: pts.append([0.0, 0.0, 0.0])
-        else: pts = [[0.0, 0.0, 0.0]] * len(indices)
-        return pts
+    try:
+        with mp_lock:
+            results = holistic.process(frame)
+        
+        if not results:
+            return None
 
-    pose_idx = [0, 2, 5, 7, 8, 11, 12, 13, 14, 15, 16]
-    hand_idx = [0, 2, 4, 5, 8, 9, 12, 20]
+        def get_coords(res, num_pts):
+            if res and res.landmark:
+                return np.array([[lm.x, lm.y, lm.z] for lm in res.landmark], dtype=np.float32)
+            return np.zeros((num_pts, 3), dtype=np.float32)
 
-    l_hand = get_specific_pts(results.left_hand_landmarks, hand_idx)
-    r_hand = get_specific_pts(results.right_hand_landmarks, hand_idx)
-    pose = get_specific_pts(results.pose_landmarks, pose_idx)
-    
-    # Combined points
-    all_pts = np.array(l_hand + r_hand + pose) 
+        face = get_coords(results.face_landmarks, 468)
+        l_hand = get_coords(results.left_hand_landmarks, 21)
+        pose = get_coords(results.pose_landmarks, 33)
+        r_hand = get_coords(results.right_hand_landmarks, 21)
 
-    # --- WRIST RELATIVE NORMALIZATION ---
-    # Most models focus on hand movement relative to the hand's own origin
-    # l_wrist is l_hand[0] (index 0), r_wrist is r_hand[0] (index 8)
-    l_wrist = all_pts[0]
-    r_wrist = all_pts[8]
+        landmarks = np.concatenate([face, l_hand, pose, r_hand], axis=0)
 
-    # If hands are present, center hands on their own wrists
-    # If not, center everything on the nose (pose[0] -> index 16)
-    center = all_pts[16] 
-    
-    normalized = (all_pts - center) 
-    # Flatten without scaling to see if raw motion triggers higher confidence
-    return normalized.flatten().astype(np.float32)
+        mask = np.any(landmarks != 0, axis=1)
+        if np.any(mask):
+            mean = np.mean(landmarks[mask], axis=0)
+            std = np.std(landmarks[mask], axis=0)
+            landmarks[mask] = (landmarks[mask] - mean) / (std + 1e-6)
 
-# --- 4. PREDICT ---
+        return landmarks
+    except Exception as e:
+        print(f"⚠️ MediaPipe Error: {e}")
+        return None
+
+# --- 3. PREDICTION ENDPOINT ---
+PRIORITY_WORDS = ["HELP", "SICK", "POLICE", "HURT", "HOSPITAL", "DOCTOR", "EMERGENCY", "STOP", "FIRE", "TELEPHONE", "AMBULANCE"]
+BOOST_THRESHOLD = 0.08  # Lowered slightly to capture boosted signals
+NORMAL_THRESHOLD = 0.45 
+
 @app.route('/predict', methods=['POST'])
 def predict():
-    if model is None: return jsonify({"error": "Offline"}), 500
-    files = request.files.getlist('images')
-    if not files: return jsonify({"error": "No data"}), 400
+    try:
+        files = request.files.getlist('images')
+        if not files: 
+            return jsonify({"error": "No frames received"}), 400
 
-    sequence_data = [extract_landmarks(cv2.cvtColor(cv2.imdecode(np.frombuffer(f.read(), np.uint8), cv2.IMREAD_COLOR), cv2.COLOR_BGR2RGB)) for f in files if f]
+        predictions = []
+        frames_processed = 0
+        
+        for i in range(0, len(files), 3):
+            f = files[i]
+            img = cv2.imdecode(np.frombuffer(f.read(), np.uint8), cv2.IMREAD_COLOR)
+            if img is not None:
+                rgb_img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+                landmarks = extract_landmarks(rgb_img)
+                if landmarks is not None:
+                    input_data = np.expand_dims(landmarks, axis=0)
+                    interpreter.set_tensor(input_details[0]['index'], input_data)
+                    interpreter.invoke()
+                    predictions.append(np.squeeze(interpreter.get_tensor(output_details[0]['index'])))
+                    frames_processed += 1
 
-    while len(sequence_data) < 20: # Ensure min length for LSTM
-        sequence_data.append(sequence_data[-1] if sequence_data else np.zeros(81))
+        if frames_processed == 0:
+            return jsonify({"prediction": "NO HANDS SEEN", "confidence": 0})
 
-    input_tensor = torch.from_numpy(np.array(sequence_data, dtype=np.float32)).unsqueeze(0)
+        # Calculate raw probabilities
+        avg_prediction = np.mean(predictions, axis=0)
+        exp_preds = np.exp(avg_prediction - np.max(avg_prediction))
+        probabilities = exp_preds / exp_preds.sum()
 
-    with mp_lock:
-        with torch.no_grad():
-            output = model(input_tensor)
-            probs = F.softmax(output, dim=-1)
-            conf, idx = torch.max(probs, dim=-1)
-            conf, idx = conf.item(), idx.item()
+        # --- ENHANCED EMERGENCY LOGIC ---
+        # 1. Identify indices
+        help_idx = next((int(v) for k, v in label_map.items() if k.upper() == "HELP"), None)
+        police_idx = next((int(v) for k, v in label_map.items() if k.upper() == "POLICE"), None)
 
-    # Diagnostics
-    top5_prob, top5_idx = torch.topk(probs, 5)
-    print(f"\n--- Top Guess: {class_to_word.get(idx, '???')} ({conf:.2f}) ---")
+        # 2. Apply "The Help Boost" 
+        # If the model thinks it's HELP even a little bit, we amplify it
+        if help_idx is not None:
+            # Check raw before boost for tracking
+            raw_help = probabilities[help_idx]
+            probabilities[help_idx] *= 3.0 # Stronger 300% boost
+            # Re-normalize so they still sum to 1
+            probabilities /= probabilities.sum()
+            print(f"🚨 TARGET TRACKING | RAW HELP: {raw_help:.6f} | BOOSTED HELP: {probabilities[help_idx]:.6f}")
 
-    word = class_to_word.get(idx, "UNKNOWN") if conf > 0.35 else "LISTENING..."
-    return jsonify({"prediction": word.upper(), "confidence": conf})
+        # 3. Get New Top 5 after boost
+        top_indices = np.argsort(probabilities)[-5:][::-1]
+        top_candidates = [(index_to_word.get(i).upper(), float(probabilities[i])) for i in top_indices]
+        
+        print(f"📊 DEBUG | Adjusted Top 5: {top_candidates}")
+
+        # --- FINAL DECISION ---
+        final_word, final_conf = top_candidates[0]
+        triggered_priority = False
+
+        # Look for priority words in the boosted top 5
+        for word, conf in top_candidates:
+            if word in PRIORITY_WORDS and conf > BOOST_THRESHOLD:
+                final_word, final_conf = word, conf
+                triggered_priority = True
+                break
+
+        # Result logic
+        threshold = BOOST_THRESHOLD if triggered_priority else NORMAL_THRESHOLD
+        
+        if final_conf >= threshold:
+            result = final_word
+            print(f"🤖 RESULT: {final_word} ({final_conf:.4f}) [Priority: {triggered_priority}]")
+        else:
+            result = "LISTENING..."
+
+        return jsonify({
+            "prediction": result, 
+            "confidence": final_conf, 
+            "is_priority": triggered_priority
+        })
+
+    except Exception as e:
+        print(f"❌ Error: {e}")
+        return jsonify({"error": str(e)}), 500
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=8000, threaded=True)
