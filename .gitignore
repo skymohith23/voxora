@@ -1,47 +1,7 @@
-# =========================
-# OS / Editor
-# =========================
-.DS_Store
-Thumbs.db
-.vscode/
-.idea/
-
-# =========================
-# Node / React
-# =========================
-node_modules/
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-
-# =========================
-# Python / Backend
-# =========================
-__pycache__/
-*.pyc
-*.pyo
-*.pyd
+server/emergency_subset/
+MP_Data/
 venv/
-.env
-
-# =========================
-# React Native
-# =========================
-android/.gradle/
-android/local.properties
-android/app/build/
-ios/Pods/
-ios/build/
-
-# =========================
-# ML / Models
-# =========================
+*.mp4
 *.h5
 *.keras
-*.pth
-*.onnx
-
-# =========================
-# Databases / Secrets
-# =========================
-*.db
+node_modules/
