@@ -5,3 +5,20 @@ venv/
 *.h5
 *.keras
 node_modules/
+# Ignore virtual environment
+asl_env/
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Large models (optional)
+
+
+# OS files
+.DS_Store
+server/asl_env/
+server/venv/
+node_modules/
+__pycache__/
+*.pyc
