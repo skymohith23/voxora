@@ -9,7 +9,7 @@ buildscript {
     }
     repositories {
         google()
-        mavenCentral()
+        mavenCentral() 
     }
     dependencies {
         classpath("com.android.tools.build:gradle:8.6.0")
@@ -24,7 +24,7 @@ allprojects {
         maven { url("$rootDir/../node_modules/jsc-android/dist") }
         
         google()
-        mavenCentral() // Fixed: was central()
+        mavenCentral() 
         
         maven {
             name 'ossrh-snapshot'
@@ -38,6 +38,13 @@ allprojects {
 subprojects {
     afterEvaluate { project ->
         if (project.hasProperty('android')) {
+            if (project.name == 'react-native-voice_voice') {
+                project.android { namespace = "com.wenkesj.voice" }
+            }
+            if (project.name == 'react-native-webrtc') {
+                project.android { namespace = "com.oney.WebRTCModule" }
+            }
+
             project.android {
                 if (namespace == null) {
                     try {

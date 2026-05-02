@@ -8,12 +8,27 @@ const RegisterScreen = ({ navigation }) => {
   const [password, setPassword] = useState('');
 
   const handleRegister = async () => {
+    if (!email || !password || !name) {
+      return Alert.alert("Error", "All fields are required");
+    }
+
     try {
-      await registerUser({ email, name, password });
-      Alert.alert("Success", "Account created! Please login.");
-      navigation.navigate('Login');
+      const userData = { 
+        email: email.toLowerCase().trim(), 
+        name: name.trim(), 
+        password: password 
+      };
+      
+      const res = await registerUser(userData);
+      
+      // If we got a response back, the user was added to existing_users
+      if (res && res.data) {
+        Alert.alert("Success", "Account created! Please login.");
+        navigation.navigate('Login');
+      }
     } catch (error) {
-      Alert.alert("Registration Failed", error.response?.data?.detail || "Error");
+      console.error("Registration Error:", error);
+      Alert.alert("Registration Failed", "Connection error or user already exists.");
     }
   };
 
@@ -27,6 +42,7 @@ const RegisterScreen = ({ navigation }) => {
       <TextInput 
         placeholder="Email" placeholderTextColor="#aaa"
         style={styles.input} onChangeText={setEmail} value={email}
+        autoCapitalize="none"
       />
       <TextInput 
         placeholder="Password" placeholderTextColor="#aaa"
@@ -35,13 +51,17 @@ const RegisterScreen = ({ navigation }) => {
       <TouchableOpacity style={styles.button} onPress={handleRegister}>
         <Text style={styles.buttonText}>Sign Up</Text>
       </TouchableOpacity>
+      
+      <TouchableOpacity onPress={() => navigation.goBack()} style={{marginTop: 20}}>
+        <Text style={{color: 'white'}}>Back to Login</Text>
+      </TouchableOpacity>
     </View>
   );
 };
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#130426', justifyContent: 'center', alignItems: 'center', padding: 20 },
-  title: { color: 'white', fontSize: 24, marginBottom: 20 },
+  title: { color: 'white', fontSize: 24, marginBottom: 20, fontWeight: 'bold' },
   input: { width: '100%', backgroundColor: 'rgba(255,255,255,0.1)', color: 'white', padding: 15, borderRadius: 10, marginBottom: 15 },
   button: { backgroundColor: '#7c3aed', padding: 15, borderRadius: 10, width: '100%', alignItems: 'center' },
   buttonText: { color: 'white', fontWeight: 'bold' }

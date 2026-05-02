@@ -1,166 +1,284 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Alert, ActivityIndicator } from 'react-native';
-import { Picker } from '@react-native-picker/picker';
-import axiosInst from "../utils/api_native";
-import SignCameraNative from '../components/SignCamera.native';
+import React, { useState, useEffect, useRef, useCallback } from "react";
+import { 
+  View, Text, StyleSheet, TouchableOpacity, ScrollView, 
+  Alert, TextInput, KeyboardAvoidingView, Platform 
+} from "react-native";
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import Tts from 'react-native-tts';
+import SignCameraNative from "../components/SignCamera.native";
+import axiosInst, { API_BASE } from "../utils/api_native";
 
 export default function EmergencyText({ navigation }) {
-  // --- State Management ---
-  const [detectedSign, setDetectedSign] = useState("");
   const [contacts, setContacts] = useState([]);
-  const [selectedContact, setSelectedContact] = useState("");
-  const [isCameraActive, setIsCameraActive] = useState(true); // Control camera mounting
+  const [selectedContact, setSelectedContact] = useState(null); 
+  const [currentSentence, setCurrentSentence] = useState("");
+  const [isCameraActive, setIsCameraActive] = useState(false);
+  const [chatHistory, setChatHistory] = useState([]); 
+  const [myEmail, setMyEmail] = useState(""); 
+  
+  const socketRef = useRef(null);
+  const scrollViewRef = useRef();
 
-  // --- Data Loading ---
-  useEffect(() => {
-    const loadContacts = async () => {
-      try {
-        const res = await axiosInst.get("/emergency/contacts");
-        setContacts(res.data?.who_added_me || []);
-      } catch (e) {
-        console.error("Load failed", e);
+  // Emergency Shortcuts
+  const quickActions = ["HELP!", "DANGER", "MEDICAL", "POLICE", "FIRE"];
+
+  // --- 1. Load Personal Data & Initial Contacts ---
+  useEffect(() => { 
+    const initializeData = async () => {
+      const userData = await AsyncStorage.getItem("user");
+      if (userData) {
+        const parsed = JSON.parse(userData);
+        const email = parsed.email.toLowerCase().trim();
+        setMyEmail(email);
+        loadContacts(email); 
+        setupWebSocket(email);
       }
     };
-    loadContacts();
+    initializeData();
 
-    // Cleanup when leaving screen
-    return () => setIsCameraActive(false);
+    // Initialize TTS
+    Tts.setDefaultLanguage('en-US');
+    Tts.setDefaultRate(0.5);
+
+    return () => {
+      if (socketRef.current) socketRef.current.close();
+      Tts.stop();
+    };
   }, []);
 
-  // --- Handlers ---
-  const handleSafeBack = useCallback(() => {
-    setIsCameraActive(false); // Kill camera instance first
-    setTimeout(() => {
-      navigation.goBack();
-    }, 200); // Wait for hardware release
-  }, [navigation]);
+  // --- 2. WebSocket Setup for Voice Relay ---
+  const setupWebSocket = (email) => {
+    const wsUrl = `${API_BASE.replace('http', 'ws')}/ws/call/${email}`;
+    socketRef.current = new WebSocket(wsUrl);
 
-  const sendText = async () => {
-    if (!selectedContact || !detectedSign) {
-      return Alert.alert("Error", "Select a contact and detect a sign first.");
-    }
+    socketRef.current.onmessage = (e) => {
+      const data = JSON.parse(e.data);
+      if (data.type === "voice_broadcast") {
+        console.log("🔊 Incoming Voice Content:", data.content);
+        Tts.speak(data.content); // Speak incoming text messages
+      }
+    };
 
-    try {
-      await axiosInst.post("/emergency/send-text", {
-        to_user: selectedContact,
-        message: `EMERGENCY MSG: ${detectedSign}`
-      });
+    socketRef.current.onerror = (e) => console.log("WS Error:", e.message);
+  };
 
-      // Show alert after giving the UI a small breather
-      setTimeout(() => {
-        Alert.alert("Success", "Message Sent!", [
-          { text: "OK", onPress: handleSafeBack }
-        ]);
-      }, 100);
-
-    } catch (e) {
-      Alert.alert("Failed", "Network Error");
+  // --- 3. Communication Logic ---
+  const broadcastSignAsVoice = (text) => {
+    if (socketRef.current?.readyState === WebSocket.OPEN && selectedContact) {
+      socketRef.current.send(JSON.stringify({
+        type: "voice_command",
+        to_user: selectedContact.email.toLowerCase().trim(),
+        text: text
+      }));
     }
   };
 
-  // --- Render ---
+  const handleQuickAction = (action) => {
+    setCurrentSentence(action);
+    broadcastSignAsVoice(action); // Broadcast to contact
+    Tts.speak(action);            // Play locally for confirmation
+  };
+
+  const loadContacts = async (email) => {
+    try {
+      const res = await axiosInst.get(`/emergency/contacts?user_email=${email}`);
+      let list = res.data?.who_added_me || [];
+      const filteredList = list.filter(c => c.email.toLowerCase().trim() !== email);
+      setContacts(filteredList);
+    } catch (e) { 
+      console.error("Contact load error", e); 
+    }
+  };
+
+  const loadMessages = async (contact) => {
+    if (!myEmail || !contact) return;
+    try {
+      const contactEmail = contact.email.toLowerCase().trim();
+      const res = await axiosInst.get(`/emergency/get-messages?to_user=${contactEmail}&sender_email=${myEmail}`);
+      setChatHistory(res.data);
+    } catch (e) { 
+      console.error("Message load error", e); 
+    }
+  };
+
+  // Poll for messages every 3 seconds
+  useEffect(() => {
+    let interval;
+    if (selectedContact && myEmail) {
+        loadMessages(selectedContact);
+        interval = setInterval(() => {
+            loadMessages(selectedContact);
+        }, 3000);
+    }
+    return () => { if (interval) clearInterval(interval); };
+  }, [selectedContact, myEmail]);
+
+  const sendTextMessage = async () => {
+    if (!currentSentence.trim() || !selectedContact) return;
+    try {
+      const res = await axiosInst.post("/emergency/send-text", {
+        sender_email: myEmail,
+        to_user: selectedContact.email.toLowerCase().trim(),
+        message: currentSentence.trim()
+      });
+      
+      setChatHistory(prev => [...prev, res.data.message]);
+      setCurrentSentence("");
+      setIsCameraActive(false);
+    } catch (e) { 
+      Alert.alert("Error", "Message failed to send."); 
+    }
+  };
+
+  const handleRecognizedText = useCallback((newText) => {
+    setCurrentSentence(prev => prev + newText);
+  }, []);
+
+  // --- RENDER 1: CONTACT LIST ---
+  if (!selectedContact) {
+    return (
+      <View style={styles.screen}>
+        <View style={styles.header}>
+          <Text style={styles.title}>Emergency Contacts</Text>
+          <TouchableOpacity onPress={() => navigation.goBack()}>
+            <Text style={styles.backLink}>Back</Text>
+          </TouchableOpacity>
+        </View>
+        <ScrollView style={styles.contactList}>
+          {contacts.map((c, i) => (
+            <TouchableOpacity key={i} style={styles.contactItem} onPress={() => setSelectedContact(c)}>
+              <View style={styles.avatar}><Text style={styles.avatarText}>{c.name ? c.name[0] : '?'}</Text></View>
+              <View>
+                <Text style={styles.contactName}>{c.name || 'User'}</Text>
+                <Text style={styles.contactEmail}>{c.email}</Text>
+              </View>
+            </TouchableOpacity>
+          ))}
+          {contacts.length === 0 && <Text style={styles.emptyHint}>No contacts verified yet.</Text>}
+        </ScrollView>
+      </View>
+    );
+  }
+
+  // --- RENDER 2: CHAT INTERFACE ---
   return (
-    <View style={styles.container}>
-      {/* Navigation Header */}
+    <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"} style={styles.screen}>
       <View style={styles.header}>
-        <TouchableOpacity onPress={handleSafeBack}>
-          <Text style={styles.backText}>← Back</Text>
-        </TouchableOpacity>
-        <Text style={styles.headerTitle}>Emergency Text</Text>
-        <View style={{ width: 50 }} /> 
-      </View>
-
-      {/* AI Camera Section with Unmount Guard */}
-      <View style={styles.cameraWrapper}>
-        {isCameraActive ? (
-          <SignCameraNative onRecognizedText={(sign) => setDetectedSign(sign)} />
-        ) : (
-          <View style={styles.placeholder}>
-            <ActivityIndicator color="#7c3aed" />
-          </View>
-        )}
-      </View>
-
-      {/* Control Panel */}
-      <View style={styles.bottomSheet}>
-        <Text style={styles.label}>Recipient Contact:</Text>
-        <View style={styles.pickerContainer}>
-          <Picker
-            selectedValue={selectedContact}
-            onValueChange={(val) => setSelectedContact(val)}
-            dropdownIconColor="white"
-            style={styles.picker}
-          >
-            <Picker.Item label="Select Contact" value="" color="#666" />
-            {contacts.map(c => (
-              <Picker.Item key={c.id} label={c.name} value={c.email} color="white" />
-            ))}
-          </Picker>
+        <TouchableOpacity onPress={() => setSelectedContact(null)}><Text style={styles.backLink}>←</Text></TouchableOpacity>
+        <View style={styles.headerInfo}>
+          <Text style={styles.title}>{selectedContact.name || 'Chat'}</Text>
+          <Text style={styles.status}>Active Now</Text>
         </View>
-
-        <Text style={styles.label}>Sign Detection Preview:</Text>
-        <View style={styles.previewContainer}>
-          <Text style={styles.previewText}>
-            {detectedSign || "No sign detected..."}
-          </Text>
-        </View>
-
-        <TouchableOpacity 
-          style={[styles.btn, !detectedSign && styles.btnDisabled]} 
-          onPress={sendText}
-          disabled={!detectedSign}
-        >
-          <Text style={styles.btnText}>Send Text Alert</Text>
+        <TouchableOpacity style={styles.sosToggle} onPress={() => setIsCameraActive(!isCameraActive)}>
+          <Text style={styles.sosToggleText}>{isCameraActive ? "⌨️ TEXT" : "📷 SIGN"}</Text>
         </TouchableOpacity>
       </View>
-    </View>
+
+      {/* EMERGENCY BUTTONS BAR */}
+      <View style={styles.quickBar}>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+          {quickActions.map(action => (
+            <TouchableOpacity key={action} style={styles.quickBtn} onPress={() => handleQuickAction(action)}>
+              <Text style={styles.quickBtnText}>{action}</Text>
+            </TouchableOpacity>
+          ))}
+        </ScrollView>
+      </View>
+
+      <ScrollView 
+        ref={scrollViewRef}
+        onContentSizeChange={() => scrollViewRef.current.scrollToEnd({ animated: true })}
+        style={styles.chatArea}
+      >
+        {chatHistory.map((msg, i) => {
+          const isMe = msg.sender.toLowerCase().trim() === myEmail;
+          return (
+            <View 
+              key={i} 
+              style={[
+                styles.msgBubble, 
+                isMe ? styles.myMsg : styles.theirMsg
+              ]}
+            >
+              <Text style={styles.msgText}>{msg.text}</Text>
+              <Text style={styles.msgTime}>{msg.time}</Text>
+            </View>
+          );
+        })}
+      </ScrollView>
+
+      {/* CAMERA MODULE */}
+      {isCameraActive && (
+        <View style={styles.cameraOverlay}>
+            <View style={styles.cameraBox}>
+              <SignCameraNative 
+                onRecognizedText={handleRecognizedText} 
+                onBroadcastText={broadcastSignAsVoice} 
+              />
+            </View>
+            <View style={styles.controls}>
+                <TouchableOpacity style={styles.toolBtn} onPress={() => {
+                  setCurrentSentence(prev => prev + " ");
+                  broadcastSignAsVoice(" ");
+                }}>
+                  <Text style={styles.toolText}>SPACE</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={[styles.toolBtn, {backgroundColor: '#444'}]} onPress={() => setCurrentSentence("")}>
+                  <Text style={styles.toolText}>CLEAR</Text>
+                </TouchableOpacity>
+            </View>
+        </View>
+      )}
+
+      {/* INPUT BAR */}
+      <View style={styles.inputArea}>
+        <TextInput 
+          style={styles.input} 
+          placeholder="Type or sign..." 
+          placeholderTextColor="#666" 
+          value={currentSentence} 
+          onChangeText={setCurrentSentence} 
+        />
+        <TouchableOpacity style={styles.sendBtn} onPress={sendTextMessage}>
+          <Text style={styles.sendBtnText}>➤</Text>
+        </TouchableOpacity>
+      </View>
+    </KeyboardAvoidingView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#000' },
-  header: { 
-    flexDirection: 'row', 
-    justifyContent: 'space-between', 
-    alignItems: 'center', 
-    paddingTop: 50, 
-    paddingHorizontal: 20, 
-    paddingBottom: 20 
-  },
-  headerTitle: { color: 'white', fontSize: 20, fontWeight: 'bold' },
-  backText: { color: '#7c3aed', fontSize: 16, fontWeight: 'bold' },
-  cameraWrapper: { flex: 1, overflow: 'hidden' },
-  placeholder: { flex: 1, backgroundColor: '#000', justifyContent: 'center' },
-  bottomSheet: { 
-    backgroundColor: '#130426', 
-    padding: 25, 
-    borderTopLeftRadius: 30, 
-    borderTopRightRadius: 30,
-    elevation: 10 
-  },
-  label: { color: '#888', fontSize: 14, marginBottom: 8 },
-  pickerContainer: { 
-    backgroundColor: 'rgba(255,255,255,0.05)', 
-    borderRadius: 12, 
-    marginBottom: 20 
-  },
-  picker: { color: 'white' },
-  previewContainer: { 
-    padding: 15, 
-    backgroundColor: 'rgba(255,255,255,0.08)', 
-    borderRadius: 12, 
-    marginBottom: 25 
-  },
-  previewText: { color: 'white', fontSize: 18, fontWeight: 'bold' },
-  btn: { 
-    backgroundColor: '#7c3aed', 
-    padding: 18, 
-    borderRadius: 15, 
-    alignItems: 'center',
-    shadowColor: "#7c3aed",
-    shadowOpacity: 0.3,
-    shadowRadius: 10
-  },
-  btnDisabled: { backgroundColor: '#444' },
-  btnText: { color: 'white', fontWeight: 'bold', fontSize: 16 }
+  screen: { flex: 1, backgroundColor: "#130426" },
+  header: { paddingTop: 50, paddingHorizontal: 20, paddingBottom: 15, flexDirection: 'row', alignItems: 'center', backgroundColor: '#1a1033' },
+  headerInfo: { flex: 1, marginLeft: 15 },
+  title: { color: 'white', fontSize: 18, fontWeight: 'bold' },
+  status: { color: '#4ade80', fontSize: 11 },
+  backLink: { color: '#7c3aed', fontSize: 16, fontWeight: 'bold' },
+  quickBar: { backgroundColor: '#1a1033', paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.05)' },
+  quickBtn: { backgroundColor: '#ff4444', paddingHorizontal: 15, paddingVertical: 8, borderRadius: 20, marginHorizontal: 5 },
+  quickBtnText: { color: 'white', fontWeight: 'bold', fontSize: 12 },
+  contactList: { flex: 1, padding: 15 },
+  contactItem: { flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.05)', padding: 15, borderRadius: 15, marginBottom: 10 },
+  avatar: { width: 45, height: 45, borderRadius: 22.5, backgroundColor: '#7c3aed', justifyContent: 'center', alignItems: 'center', marginRight: 15 },
+  avatarText: { color: 'white', fontWeight: 'bold', fontSize: 18 },
+  contactName: { color: 'white', fontSize: 16, fontWeight: 'bold' },
+  contactEmail: { color: '#aaa', fontSize: 12 },
+  chatArea: { flex: 1, paddingHorizontal: 15 },
+  msgBubble: { paddingHorizontal: 15, paddingVertical: 10, borderRadius: 18, marginBottom: 10, maxWidth: '80%' },
+  myMsg: { alignSelf: 'flex-end', backgroundColor: '#7c3aed', borderBottomRightRadius: 2 },
+  theirMsg: { alignSelf: 'flex-start', backgroundColor: '#333', borderBottomLeftRadius: 2 },
+  msgText: { color: 'white', fontSize: 15 },
+  msgTime: { color: 'rgba(255,255,255,0.5)', fontSize: 10, textAlign: 'right', marginTop: 4 },
+  cameraOverlay: { height: 320, backgroundColor: '#1a1033' },
+  cameraBox: { height: 250, backgroundColor: 'black' },
+  controls: { flexDirection: 'row', padding: 10, justifyContent: 'center' },
+  toolBtn: { backgroundColor: '#7c3aed', paddingHorizontal: 20, paddingVertical: 8, borderRadius: 10, marginHorizontal: 5 },
+  toolText: { color: 'white', fontWeight: 'bold', fontSize: 12 },
+  inputArea: { flexDirection: 'row', padding: 15, alignItems: 'center', backgroundColor: '#1a1033', borderTopWidth: 1, borderTopColor: 'rgba(255,255,255,0.05)' },
+  input: { flex: 1, backgroundColor: 'rgba(255,255,255,0.05)', borderRadius: 25, paddingHorizontal: 20, height: 45, color: 'white' },
+  sendBtn: { width: 45, height: 45, borderRadius: 22.5, backgroundColor: '#7c3aed', justifyContent: 'center', alignItems: 'center', marginLeft: 10 },
+  sendBtnText: { color: 'white', fontSize: 20 },
+  sosToggle: { backgroundColor: 'rgba(124, 58, 237, 0.2)', paddingVertical: 6, paddingHorizontal: 12, borderRadius: 15 },
+  sosToggleText: { color: '#7c3aed', fontWeight: 'bold', fontSize: 12 },
+  emptyHint: { color: '#666', textAlign: 'center', marginTop: 50 },
 });
