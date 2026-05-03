@@ -2,8 +2,8 @@ server/emergency_subset/
 MP_Data/
 venv/
 *.mp4
-*.h5
-*.keras
+
+
 node_modules/
 # Ignore virtual environment
 asl_env/
@@ -22,3 +22,12 @@ server/venv/
 node_modules/
 __pycache__/
 *.pyc
+server/datasets
+server/asl_env311
+server/asl_env311/
+server/asl_env/
+venv/
+
+
+server/datasets/
+
