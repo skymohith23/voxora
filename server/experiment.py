@@ -1,20 +1,21 @@
 import cv2
-import mediapipe as mp
 import numpy as np
-import os
+import tensorflow as tf
+import json
 
-mp_hands = mp.solutions.hands
-hands = mp_hands.Hands(max_num_hands=1)
-mp_draw = mp.solutions.drawing_utils
+# 🔹 Load model
+model = tf.keras.models.load_model("asl_model.h5", compile=False)
 
-X = []
-y = []
+# 🔹 Load labels
+with open("labels.json", "r") as f:
+    labels = json.load(f)
 
-label = input("Enter label (A-Z): ").upper()
+labels = {int(v): k for k, v in labels.items()}
 
+# 🔹 Webcam
 cap = cv2.VideoCapture(0)
 
-print("Press SPACE to capture, ESC to exit")
+print("Press ESC to exit")
 
 while True:
     ret, frame = cap.read()
@@ -22,36 +23,40 @@ while True:
         break
 
     frame = cv2.flip(frame, 1)
-    rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
-    result = hands.process(rgb)
+    # 🔹 Define ROI (center box)
+    h, w, _ = frame.shape
+    x1, y1 = int(w * 0.3), int(h * 0.2)
+    x2, y2 = int(w * 0.7), int(h * 0.8)
 
-    if result.multi_hand_landmarks:
-        for handLms in result.multi_hand_landmarks:
-            mp_draw.draw_landmarks(frame, handLms, mp_hands.HAND_CONNECTIONS)
+    roi = frame[y1:y2, x1:x2]
 
-            data = []
-            for lm in handLms.landmark:
-                data.extend([lm.x, lm.y, lm.z])
+    # Draw box
+    cv2.rectangle(frame, (x1, y1), (x2, y2), (255, 0, 0), 2)
 
-            cv2.putText(frame, f"Label: {label}", (50,50),
-                        cv2.FONT_HERSHEY_SIMPLEX, 1, (0,255,0), 2)
+    # 🔹 Preprocess
+    img = cv2.resize(roi, (64, 64))
+    img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    img = img / 255.0
+    img = img.reshape(1, 64, 64, 1)
 
-    cv2.imshow("Collect Data", frame)
+    # 🔹 Predict
+    pred = model.predict(img, verbose=0)
+    class_id = np.argmax(pred)
+    confidence = np.max(pred)
 
-    key = cv2.waitKey(1)
+    label = labels[class_id]
 
-    if key == 32:  # SPACE
-        if result.multi_hand_landmarks:
-            X.append(data)
-            y.append(ord(label) - 65)
-            print("Captured sample!")
+    # 🔹 Display
+    cv2.putText(frame, f"{label} ({confidence:.2f})",
+                (10, 50),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                1, (0, 255, 0), 2)
 
-    if key == 27:  # ESC
+    cv2.imshow("ASL Detection", frame)
+
+    if cv2.waitKey(1) & 0xFF == 27:
         break
-
-np.save("X.npy", np.array(X))
-np.save("y.npy", np.array(y))
 
 cap.release()
 cv2.destroyAllWindows()
