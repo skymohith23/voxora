@@ -1,11 +1,13 @@
 import cv2
 import numpy as np
 import tensorflow as tf
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
 from flask_sock import Sock
 import os
 import json
+import uuid
+from gtts import gTTS
 from collections import deque
 from datetime import datetime
 
@@ -17,6 +19,10 @@ sock = Sock(app)
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 MODEL_PATH = os.path.join(BASE_DIR, "asl_model.h5")
 LABELS_PATH = os.path.join(BASE_DIR, "labels.json")
+
+# --- AUDIO DIRECTORY SETUP FOR TTS ---
+AUDIO_DIR = os.path.join(BASE_DIR, "audio")
+os.makedirs(AUDIO_DIR, exist_ok=True)
 
 # --- 1. BUILD MODEL ---
 def build_model(num_classes=29):
@@ -68,6 +74,45 @@ emergency_db = {
     "deepthi23venkatesh@gmail.com": ["skymohith23@gmail.com", "test@voxora.com"],
     "test@voxora.com": ["skymohith23@gmail.com", "deepthi23venkatesh@gmail.com"]
 }
+
+# --- TEXT TO SPEECH (TTS) ROUTES ---
+@app.route('/tts', methods=['POST'])
+def text_to_speech():
+    try:
+        data = request.get_json(silent=True) or {}
+        text = str(data.get("text", "")).strip()
+
+        if not text:
+            return jsonify({
+                "status": "error",
+                "message": "text is required"
+            }), 400
+
+        filename = f"{uuid.uuid4().hex}.mp3"
+        filepath = os.path.join(AUDIO_DIR, filename)
+
+        tts = gTTS(text=text, lang="en")
+        tts.save(filepath)
+
+        audio_url = f"/audio/{filename}"
+
+        return jsonify({
+            "status": "success",
+            "audio_url": audio_url,
+            "filename": filename,
+            "text": text,
+        })
+
+    except Exception as e:
+        return jsonify({
+            "status": "error",
+            "message": str(e)
+        }), 500
+
+
+@app.route('/audio/<path:filename>', methods=['GET'])
+def serve_audio(filename):
+    return send_from_directory(AUDIO_DIR, filename)
 
 # --- ASL PREDICTION ROUTE ---
 @app.route('/predict', methods=['POST'])
@@ -163,53 +208,72 @@ def get_messages():
 def call_socket(ws, user_email):
     u = user_email.lower().strip()
     active_calls[u] = ws
-    print(f"🔌 WebSocket Connected: {u} | Active Users: {list(active_calls.keys())}")
-    
+
+    print(
+        f"🔌 WebSocket Connected: {u} | "
+        f"Active Users: {list(active_calls.keys())}"
+    )
+
     try:
         while True:
             data = ws.receive()
-            if not data: 
+
+            if not data:
                 break
-                
+
             msg = json.loads(data)
             target = msg.get('to_user', '').lower().strip()
             msg_type = msg.get('type', 'call_signal')
-            
-            # Drop self-addressed frames
-            if target == u:
+
+            if not target or target == u:
                 continue
 
-            # Drop unsupported signal types
-            if msg_type not in ["initiate_call", "call_ended", "voice_broadcast", "speech_result"]:
+            allowed_message_types = [
+                "initiate_call",
+                "call_ended",
+                "voice_broadcast",
+                "speech_result",
+                "webrtc_signal",
+            ]
+
+            if msg_type not in allowed_message_types:
                 continue
 
-            speech_text = msg.get('text') or msg.get('content') or ""
-
-            if msg_type in ["voice_broadcast", "speech_result"]:
-                print(f"🎙️ Relaying Voice [{u} -> {target}]: '{speech_text}'")
-            else:
-                print(f"📡 Forwarding Call Signal: {u} -> {target} [{msg_type}]")
-            
-            if target in active_calls:
-                target_ws = active_calls[target]
-                payload = {
-                    "type": msg_type,
-                    "sender": u,
-                    "mode": msg.get('mode', 'talk')
-                }
-                if speech_text:
-                    payload["text"] = speech_text
-                    payload["content"] = speech_text
-
-                target_ws.send(json.dumps(payload))
-            else:
-                print(f"⚠️ Target {target} not connected in active_calls.")
+            if target not in active_calls:
                 ws.send(json.dumps({
                     "type": "user_offline",
                     "message": f"User {target} is currently unreachable."
                 }))
+                continue
+
+            payload = {
+                "type": msg_type,
+                "sender": u,
+                "mode": msg.get("mode", "talk"),
+            }
+
+            # Preserve all WebRTC signaling fields.
+            if msg_type == "webrtc_signal":
+                payload["signal"] = msg.get("signal")
+
+                if msg.get("description") is not None:
+                    payload["description"] = msg["description"]
+
+                if msg.get("candidate") is not None:
+                    payload["candidate"] = msg["candidate"]
+
+            # Preserve text messages used by the existing application.
+            speech_text = msg.get("text") or msg.get("content") or ""
+
+            if speech_text:
+                payload["text"] = speech_text
+                payload["content"] = speech_text
+
+            active_calls[target].send(json.dumps(payload))
+
     except Exception as e:
         print(f"⚠️ WebSocket disconnect for {u}: {e}")
+
     finally:
         active_calls.pop(u, None)
         print(f"🔌 WebSocket Disconnected: {u}")
