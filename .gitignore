@@ -31,3 +31,6 @@ venv/
 
 server/datasets/
 
+.DS_Store
+*/.DS_Store
+asl_env311/
